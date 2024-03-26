@@ -1,0 +1,173 @@
+@page "/cardrecipes"
+@inject AppService AppService
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject HttpClient HttpClient
+@inject NavigationManager NavManager
+@attribute [Authorize]
+
+<style>
+    .max-height-card {
+        max-height: 500px;
+        min-height: 500px;
+        overflow: auto;     /* Enable scrolling if the content exceeds the max height */
+    }
+
+    .custom-cursor:hover {
+        cursor: pointer;
+    }
+</style>
+
+<PageTitle>Recipes</PageTitle>
+
+<div class="mb-3">
+    <MudText Typo="Typo.h3">Recipes</MudText>
+</div>
+
+<MudStack AlignItems="AlignItems.End" Class="mb-3">
+    <MudButton Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.AddCircleOutline" Color="Color.Primary" OnClick="@(e => OnAdd())">Add</MudButton>
+</MudStack>
+
+@if (_recipes != null)
+{<MudGrid>
+    @foreach (var recipe in _recipes.Value ?? [])
+    {
+       <MudItem xs="12" md="3">
+                <MudCard Class="max-height-card" @onclick="@(e => OnCardClick(recipe))">
+                    <MudCardMedia Class="custom-cursor" Image="@GetAbsoluteUri(recipe.Photo ?? " ")"></MudCardMedia>
+                <MudCardContent>
+                    <MudText Typo="Typo.h6">@recipe.Name</MudText>
+                    <MudText Typo="Typo.body2">@recipe.SourceShort</MudText>
+                </MudCardContent>
+                    <MudCardActions>
+                        <MudRating Size="Size.Small" ReadOnly="true" SelectedValue="@GetRating(recipe)" Color="Color.Warning" ItemCount="5" />
+                        <AuthorizeView Roles="Administrator">
+                            <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="@Size.Small" Title="Edit" OnClick="@(e => OnEdit(recipe))" />
+                            <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="@Size.Small" Title="Delete" OnClick="@(e => OnDelete(recipe))" />
+                        </AuthorizeView>
+                    </MudCardActions>
+            </MudCard>
+       </MudItem>
+    }
+    </MudGrid>
+}
+
+@code {
+    private AppService.ODataResult<Recipes>? _recipes = null;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            _recipes = await AppService.ListRecipesODataAsync(100, 0, null, null, true, "Tags,Reviews");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private string GetAbsoluteUri(string uri)
+    {
+        if (!uri.StartsWith("/"))
+        {
+            return uri;
+        }
+
+        var baseUri = HttpClient.BaseAddress;
+
+        if (baseUri == null)
+        {
+            throw new Exception("Unable to determine base address");
+        }
+
+        Uri absolute = new(baseUri, uri);
+
+        return absolute.ToString();
+    }
+
+    private async Task<GridData<Recipes>> ServerReload(GridState<Recipes> state)
+    {
+        var top = state.PageSize;
+        var skip = state.Page * state.PageSize;
+        var orderby = ODataHelpers.GetOrderBy(state.SortDefinitions);
+        var filter = ODataHelpers.GetFilter(state.FilterDefinitions);
+
+        AppService.ODataResult<Recipes>? result = null;
+
+        try
+        {
+            result = await AppService.ListRecipesODataAsync(top, skip, orderby, filter, true, "Tags,Reviews");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+
+        return new() { TotalItems = result?.Count ?? 0, Items = result?.Value ?? Enumerable.Empty<Recipes>() };
+    }
+
+    private async void OnAdd()
+    {
+        DialogOptions dialogOptions = new() { FullWidth = true, CloseOnEscapeKey = true };
+
+        var result = await DialogService.Show<AddRecipes>("Add Recipes", dialogOptions).Result;
+
+        if (!result.Canceled)
+        {
+            _recipes = await AppService.ListRecipesODataAsync(100, 0, null, null, true, "Tags,Reviews");
+            StateHasChanged();
+        }
+    }
+
+    private async void OnEdit(Recipes record)
+    {
+        DialogParameters<UpdateRecipes> dialogParams = new() { { x => x.Id, record.Id!.Value } };
+        DialogOptions dialogOptions = new() { FullWidth = true, CloseOnEscapeKey = true };
+
+        var result = await DialogService.Show<UpdateRecipes>("Update Recipes", dialogParams, dialogOptions).Result;
+
+        if (!result.Canceled)
+        {
+            _recipes = await AppService.ListRecipesODataAsync(100, 0, null, null, true, "Tags,Reviews");
+            StateHasChanged();
+        }
+    }
+
+    private int GetRating(Recipes record)
+    {
+        if (record != null && record.Reviews != null)
+        {
+            return (int)record.Reviews.AverageRating();
+        }
+        else
+            return 0;
+    }
+
+    private async void OnDelete(Recipes record)
+    {
+        var result = await DialogService.ShowMessageBox(
+            "Warning",
+            "Are you sure you want to delete this record?",
+            "Delete",
+            "Cancel");
+
+        if (result.GetValueOrDefault(false))
+        {
+            try
+            {
+                await AppService.DeleteRecipesAsync(record.Id!.Value);
+            }
+            catch (Exception ex)
+            {
+                Snackbar.Add(ex.Message, Severity.Error);
+            }
+        }
+    }
+
+    private void OnCardClick(Recipes recipe)
+    {
+        var recipeId = recipe.Id; // Assuming your recipe object has an Id property
+        NavManager.NavigateTo($"/recipe/{recipeId}");
+    }
+}

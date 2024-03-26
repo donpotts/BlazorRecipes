@@ -1,0 +1,152 @@
+@page "/recipeingredients"
+@inject AppService AppService
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject HttpClient HttpClient
+@attribute [Authorize]
+
+<PageTitle>RecipeIngredients</PageTitle>
+
+<div class="mb-3">
+    <MudText Typo="Typo.h3">RecipeIngredients</MudText>
+</div>
+
+<MudStack AlignItems="AlignItems.End" Class="mb-3">
+    <MudButton Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.AddCircleOutline" Color="Color.Primary" OnClick="@(e => OnAdd())">Add</MudButton>
+</MudStack>
+
+<MudDataGrid T="RecipeIngredients" @ref="grid" ServerData="(new Func<GridState<RecipeIngredients>, Task<GridData<RecipeIngredients>>>(ServerReload))" Filterable="true">
+    <Columns>
+        <PropertyColumn Property="x => x!.Id" Title="Id" />
+        <PropertyColumn Property="x => x!.Quantity" Title="Quantity" />
+        <PropertyColumn @ref="recipesColumn" Property="x => x!.Recipes != null ? x.Recipes.Id : null" Title="Recipes" />
+        <PropertyColumn @ref="ingredientsColumn" Property="x => x!.Ingredients != null ? x.Ingredients.Id : null" Title="Ingredients" />
+        <PropertyColumn @ref="unitsColumn" Property="x => x!.Units != null ? x.Units.Id : null" Title="Units" />
+        <TemplateColumn StickyRight="true" Sortable="false" Filterable="false">
+            <CellTemplate>
+                <MudStack Row="true">
+                    <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="@Size.Small" Title="Edit" OnClick="@(e => OnEdit(context.Item!))" />
+                    <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="@Size.Small" Title="Delete" OnClick="@(e => OnDelete(context.Item!))" />
+                </MudStack>
+            </CellTemplate>
+        </TemplateColumn>
+    </Columns>
+    <PagerContent>
+        <MudDataGridPager T="RecipeIngredients" />
+    </PagerContent>
+</MudDataGrid>
+
+@code {
+    private MudDataGrid<RecipeIngredients>? grid;
+    private PropertyColumn<RecipeIngredients, long?>? recipesColumn;
+
+    private PropertyColumn<RecipeIngredients, long?>? ingredientsColumn;
+
+    private PropertyColumn<RecipeIngredients, long?>? unitsColumn;
+
+
+    private string GetAbsoluteUri(string uri)
+    {
+        if (!uri.StartsWith("/"))
+        {
+            return uri;
+        }
+
+        var baseUri = HttpClient.BaseAddress;
+
+        if (baseUri == null)
+        {
+            throw new Exception("Unable to determine base address");
+        }
+
+        Uri absolute = new(baseUri, uri);
+
+        return absolute.ToString();
+    }
+
+    private async Task<GridData<RecipeIngredients>> ServerReload(GridState<RecipeIngredients> state)
+    {
+        var top = state.PageSize;
+        var skip = state.Page * state.PageSize;
+        var orderby = ODataHelpers.GetOrderBy(state.SortDefinitions);
+        var filter = ODataHelpers.GetFilter(state.FilterDefinitions);
+
+        if (!string.IsNullOrEmpty(recipesColumn?.PropertyName))
+        {
+            orderby = orderby?.Replace(recipesColumn.PropertyName, "Recipes/Id");
+            filter = filter?.Replace(recipesColumn.PropertyName, "Recipes/Id");
+        }
+
+        if (!string.IsNullOrEmpty(ingredientsColumn?.PropertyName))
+        {
+            orderby = orderby?.Replace(ingredientsColumn.PropertyName, "Ingredients/Id");
+            filter = filter?.Replace(ingredientsColumn.PropertyName, "Ingredients/Id");
+        }
+
+        if (!string.IsNullOrEmpty(unitsColumn?.PropertyName))
+        {
+            orderby = orderby?.Replace(unitsColumn.PropertyName, "Units/Id");
+            filter = filter?.Replace(unitsColumn.PropertyName, "Units/Id");
+        }
+
+        AppService.ODataResult<RecipeIngredients>? result = null;
+
+        try
+        {
+            result = await AppService.ListRecipeIngredientsODataAsync(top, skip, orderby, filter, true, "Recipes,Ingredients,Units");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+
+        return new() { TotalItems = result?.Count ?? 0, Items = result?.Value ?? Enumerable.Empty<RecipeIngredients>() };
+    }
+
+    private async void OnAdd()
+    {
+        DialogOptions dialogOptions = new() { FullWidth = true, CloseOnEscapeKey = true };
+
+        var result = await DialogService.Show<AddRecipeIngredients>("Add RecipeIngredients", dialogOptions).Result;
+
+        if (!result.Canceled)
+        {
+            await (grid?.ReloadServerData() ?? Task.CompletedTask);
+        }
+    }
+
+    private async void OnEdit(RecipeIngredients record)
+    {
+        DialogParameters<UpdateRecipeIngredients> dialogParams = new() { { x => x.Id, record.Id!.Value } };
+        DialogOptions dialogOptions = new() { FullWidth = true, CloseOnEscapeKey = true };
+
+        var result = await DialogService.Show<UpdateRecipeIngredients>("Update RecipeIngredients", dialogParams, dialogOptions).Result;
+
+        if (!result.Canceled)
+        {
+            await (grid?.ReloadServerData() ?? Task.CompletedTask);
+        }
+    }
+
+    private async void OnDelete(RecipeIngredients record)
+    {
+        var result = await DialogService.ShowMessageBox(
+            "Warning",
+            "Are you sure you want to delete this record?",
+            "Delete",
+            "Cancel");
+
+        if (result.GetValueOrDefault(false))
+        {
+            try
+            {
+                await AppService.DeleteRecipeIngredientsAsync(record.Id!.Value);
+                await (grid?.ReloadServerData() ?? Task.CompletedTask);
+            }
+            catch (Exception ex)
+            {
+                Snackbar.Add(ex.Message, Severity.Error);
+            }
+        }
+    }
+}
